@@ -1,0 +1,555 @@
+import streamlit as st
+import pandas as pd
+import plotly.graph_objects as go
+import math
+
+st.set_page_config(page_title="Caso de negocio | Abril Nacif", page_icon="📦", layout="wide", initial_sidebar_state="collapsed")
+
+# =========================
+# DATA MODEL
+# =========================
+NORMAL = {
+    "Colecta": 250000/280,
+    "XD": 741000000/10000000,
+    "Media milla": 900000/2100,
+    "Service Center": 741500000/10000000,
+    "Última milla": 150000/75,
+}
+TRANS = ["Colecta", "Media milla", "Última milla"]
+CAP = {"Colecta": 280, "Media milla": 2100, "Última milla": 75}
+FACT = {"5x": 5.0, "5,5x": 5.5, "6x": 6.0}
+REV_N, REV_V, VOL = 3000, 19000, 50000
+XD_AFTER = 741000000/10050000
+SC_AFTER = 741500000/10050000
+
+INK="#111111"; SECONDARY="#3A3A3C"; GRID="#E5E5EA"; PANEL="#FFFFFF"; BG="#F5F5F7"
+BLUE="#3483FA"; YELLOW="#FFE600"; GREEN="#00A650"; AMBER="#E8A329"; RED="#D9534F"; NAVY="#24364B"
+SCOL={"5x":GREEN,"5,5x":AMBER,"6x":RED}
+
+def ars(v,d=0):
+    sign="−" if v < 0 else ""
+    s=f"{abs(v):,.{d}f}".replace(",","X").replace(".",",").replace("X",".")
+    return sign+"$"+s
+
+def dec(v,d=1):
+    return f"{v:.{d}f}".replace(".",",")
+
+def cap_floor(v):
+    return str(math.floor(v))
+
+def transport_cost(s):
+    return sum(NORMAL[e]*FACT[s] for e in TRANS)
+
+def metrics(s):
+    c=transport_cost(s)
+    r=REV_V-c
+    return c,r,r/REV_V*100,r*VOL/1e6
+
+def stage_cost(e,s):
+    if e in TRANS:
+        return NORMAL[e]*FACT[s]
+    return XD_AFTER if e=="XD" else SC_AFTER
+
+def avg_total(s):
+    return sum(stage_cost(e,s) for e in NORMAL)
+
+BE = REV_V / sum(NORMAL[e] for e in TRANS)
+
+# One single chart theme: NO light text on light backgrounds.
+def executive_layout(fig, height=300, showlegend=True, margin=None):
+    if margin is None:
+        margin=dict(l=20,r=20,t=30,b=20)
+    fig.update_layout(
+        height=height,
+        margin=margin,
+        paper_bgcolor="#FFFFFF",
+        plot_bgcolor="#FFFFFF",
+        font=dict(family="Inter, Arial, sans-serif", size=13, color="#111111"),
+        title_font=dict(color="#111111"),
+        legend=dict(
+            orientation="h", y=1.10, x=0, xanchor="left",
+            font=dict(size=12,color="#111111"),
+            bgcolor="rgba(255,255,255,0)"
+        ),
+        showlegend=showlegend,
+        hoverlabel=dict(bgcolor="#111111",font_color="#FFFFFF",font_size=12),
+    )
+    fig.update_xaxes(
+        color="#111111",
+        tickfont=dict(color="#111111",size=12),
+        title_font=dict(color="#111111",size=12),
+        gridcolor="#E5E5EA",
+        zerolinecolor="#C7C7CC",
+        linecolor="#C7C7CC"
+    )
+    fig.update_yaxes(
+        color="#111111",
+        tickfont=dict(color="#111111",size=12),
+        title_font=dict(color="#111111",size=12),
+        gridcolor="#E5E5EA",
+        zerolinecolor="#C7C7CC",
+        linecolor="#C7C7CC"
+    )
+    return fig
+
+# =========================
+# UI
+# =========================
+st.markdown("""
+<style>
+html,body,[class*="css"]{font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif;color:#111!important}
+.stApp{background:#F5F5F7}
+.block-container{max-width:1440px;padding:1.2rem 2rem 3.5rem}
+header[data-testid="stHeader"]{background:#F5F5F7}
+#MainMenu,footer{visibility:hidden}
+
+/* Every text element on a light surface is dark */
+.stMarkdown,.stMarkdown p,.stMarkdown span,.stMarkdown div,
+label,[data-testid="stWidgetLabel"] p,[data-testid="stCaptionContainer"] p,
+[data-testid="stDataFrame"] * {color:#111!important}
+
+.hero{
+ background:#FFE600;border-radius:24px;padding:28px 32px;
+ display:flex;align-items:center;justify-content:space-between;
+ box-shadow:0 8px 30px rgba(0,0,0,.06);margin-bottom:18px
+}
+.hero-title{font-size:34px;font-weight:800;letter-spacing:-1.2px;color:#111!important;line-height:1}
+.hero-sub{font-size:13px;font-weight:600;color:#111!important;margin-top:9px}
+.hero-chip{background:#111;color:#fff!important;border-radius:999px;padding:10px 16px;font-size:12px;font-weight:750}
+.hero-chip *{color:#fff!important}
+
+div[data-baseweb="select"]>div{
+ background:#fff!important;border:1px solid #D1D1D6!important;border-radius:12px!important;
+ min-height:44px!important;box-shadow:none!important
+}
+div[data-baseweb="select"] *{color:#111!important}
+[data-baseweb="popover"] *{color:#111!important}
+
+.section-head{margin-top:38px;margin-bottom:14px}
+.kicker{font-size:10px;font-weight:800;letter-spacing:1.35px;text-transform:uppercase;color:#111!important}
+.h2{font-size:25px;font-weight:800;letter-spacing:-.6px;color:#111!important;margin-top:4px}
+.deck{font-size:13px;color:#111!important;margin-top:4px}
+
+.metric-card{
+ background:#fff;border:1px solid #E5E5EA;border-radius:18px;padding:18px 20px;
+ box-shadow:0 2px 10px rgba(0,0,0,.025);min-height:112px
+}
+.metric-label{font-size:10px;font-weight:800;letter-spacing:.8px;color:#111!important;text-transform:uppercase}
+.metric-value{font-size:27px;font-weight:800;letter-spacing:-.5px;color:#111!important;margin-top:7px}
+.metric-note{font-size:11px;color:#111!important;margin-top:3px}
+
+.callout{
+ background:#fff;border:1px solid #E5E5EA;border-radius:16px;padding:14px 16px;
+ font-size:12px;color:#111!important
+}
+.callout b{color:#111!important}
+
+[data-testid="stDataFrame"]{
+ border:1px solid #E5E5EA;border-radius:14px;overflow:hidden;background:#fff;
+ box-shadow:0 2px 10px rgba(0,0,0,.02)
+}
+</style>
+
+<style>
+table th, table td { color:#111111 !important; }
+table th { font-weight:750 !important; }
+</style>
+
+""",unsafe_allow_html=True)
+
+st.markdown(f"""
+<div class="hero">
+ <div>
+   <div class="hero-title">Caso de negocio</div>
+   <div class="hero-sub">Paquetes voluminosos · 50.000 unidades / mes · Abril Nacif</div>
+ </div>
+ <div class="hero-chip">PUNTO DE EQUILIBRIO&nbsp;&nbsp;{dec(BE,2)}x</div>
+</div>
+""",unsafe_allow_html=True)
+
+f1,f2,_=st.columns([1.15,1.25,3.6])
+with f1:
+    focus=st.selectbox("Escenario",["Todos","5x","5,5x","6x"],0)
+with f2:
+    stage=st.selectbox("Etapa",["Todas","Colecta","XD","Media milla","Service Center","Última milla"],0)
+
+scenarios=list(FACT) if focus=="Todos" else [focus]
+
+# =========================
+# 01 CAPACITY
+# =========================
+st.markdown("""
+<div class="section-head">
+ <div class="kicker">01 · Operación</div>
+ <div class="h2">Capacidad</div>
+ <div class="deck">Capacidad disponible por ruta al incorporar paquetes voluminosos.</div>
+</div>
+""",unsafe_allow_html=True)
+
+cap_stages=list(CAP) if stage=="Todas" else ([stage] if stage in CAP else [])
+if cap_stages:
+    left,right=st.columns([1.05,1.25],gap="large")
+    with left:
+        labels=["Normal"]+scenarios
+        values=[100]+[100/FACT[s] for s in scenarios]
+        colors=[BLUE]+[SCOL[s] for s in scenarios]
+        fig=go.Figure()
+        for lab,val,col in zip(labels,values,colors):
+            fig.add_trace(go.Bar(
+                y=[lab],x=[val],orientation="h",width=.34,
+                marker=dict(color=col,line=dict(width=0)),
+                text=[dec(val)+"%"],textposition="outside",
+                textfont=dict(color=INK,size=13),
+                hovertemplate=f"<b>{lab}</b><br>{dec(val)}% de capacidad relativa<extra></extra>",
+                showlegend=False
+            ))
+        executive_layout(fig,255,False,dict(l=10,r=60,t=10,b=28))
+        fig.update_xaxes(title="Capacidad relativa vs. normal",range=[0,108],ticksuffix="%",dtick=20)
+        fig.update_yaxes(title="",categoryorder="array",categoryarray=labels[::-1],showgrid=False)
+        st.plotly_chart(fig,use_container_width=True,config={"displayModeBar":False})
+    with right:
+        rows=[]
+        for e in cap_stages:
+            row={"Etapa":e,"Normal":str(CAP[e])}
+            for s in scenarios:
+                row[s]=cap_floor(CAP[e]/FACT[s])
+            rows.append(row)
+        # Executive capacity matrix
+        cap_rows = ["Colecta","Media milla","Última milla"]
+        cap_normal = {"Colecta":280,"Media milla":2100,"Última milla":75}
+        cap_values = {
+            "5x":{"Colecta":56,"Media milla":420,"Última milla":15},
+            "5,5x":{"Colecta":50,"Media milla":381,"Última milla":13},
+            "6x":{"Colecta":46,"Media milla":350,"Última milla":12},
+        }
+        cap_colors={"5x":"#56A45C","5,5x":"#D9A63D","6x":"#C65B55"}
+        cap_tints={"5x":"#F4FAF5","5,5x":"#FFF9EA","6x":"#FFF7F6"}
+        cap_heads={"5x":"#EAF6ED","5,5x":"#FFF4D8","6x":"#FDE9E7"}
+        cap_icons={"Colecta":"▣","Media milla":"⬡","Última milla":"▰"}
+
+        html_cap = """
+        <div style="background:#fff;border:1px solid #E5E5EA;border-radius:18px;
+                    box-shadow:0 2px 12px rgba(0,0,0,.025);overflow:hidden;">
+          <div style="padding:16px 18px 12px;font-size:16px;font-weight:800;color:#111;">
+            Capacidad equivalente por ruta
+          </div>
+          <div style="overflow-x:auto;">
+          <table style="width:100%;border-collapse:separate;border-spacing:0;font-size:13px;color:#111;">
+            <thead><tr>
+              <th style="text-align:left;padding:13px 14px;background:#F2F2F7;border-top:1px solid #E5E5EA;">Etapa</th>
+              <th style="text-align:center;padding:13px;background:#F2F2F7;border-top:1px solid #E5E5EA;">Normal</th>
+        """
+        for s in ["5x","5,5x","6x"]:
+            html_cap += f'<th style="text-align:center;padding:13px;background:{cap_heads[s]};border-top:1px solid #E5E5EA;font-size:15px;">{s}</th>'
+        html_cap += "</tr></thead><tbody>"
+
+        for e in cap_rows:
+            html_cap += f"""
+            <tr>
+              <td style="padding:14px;border-top:1px solid #E5E5EA;font-weight:700;white-space:nowrap;">
+                <span style="display:inline-flex;width:26px;height:26px;border-radius:8px;background:#F2F2F7;
+                             align-items:center;justify-content:center;margin-right:8px;font-weight:800;">{cap_icons[e]}</span>{e}
+              </td>
+              <td style="padding:14px;text-align:center;border-top:1px solid #E5E5EA;font-weight:800;">
+                {cap_normal[e]:,}
+                <div style="font-size:10px;font-weight:500;color:#6E6E73;margin-top:2px;">paquetes / ruta</div>
+              </td>
+            """
+            for s in ["5x","5,5x","6x"]:
+                v=cap_values[s][e]
+                # Share of normal route capacity: 20%, 18.2%, 16.7%
+                share=v/cap_normal[e]*100
+                html_cap += f"""
+                <td style="padding:12px 14px;text-align:center;border-top:1px solid #E5E5EA;background:{cap_tints[s]};">
+                  <div style="font-size:17px;font-weight:850;color:#111;">{v:,}</div>
+                  <div style="height:7px;background:#E9EAED;border-radius:999px;overflow:hidden;margin:7px auto 4px;max-width:105px;">
+                    <span style="display:block;width:{share:.1f}%;height:100%;background:{cap_colors[s]};border-radius:999px;"></span>
+                  </div>
+                  <div style="font-size:10px;color:#6E6E73;">{share:.1f}% de la capacidad normal</div>
+                </td>
+                """
+            html_cap += "</tr>"
+
+        html_cap += "</tbody></table></div></div>"
+        st.html(html_cap)
+else:
+    st.markdown('<div class="callout"><b>No aplica:</b> la capacidad por ruta corresponde a Colecta, Media milla y Última milla.</div>',unsafe_allow_html=True)
+
+# =========================
+# 02 COSTS
+# =========================
+st.markdown("""
+<div class="section-head">
+ <div class="kicker">02 · Economía</div>
+ <div class="h2">Costos por etapa</div>
+ <div class="deck">Costo promedio por paquete y variación respecto de un paquete normal.</div>
+</div>
+""",unsafe_allow_html=True)
+
+selected_stages=list(NORMAL) if stage=="Todas" else [stage]
+
+# ---------- Executive cost chart ----------
+left,right=st.columns([0.92,1.58],gap="large")
+
+with left:
+    labels=["Normal"]+scenarios
+    totals=[sum(NORMAL.values())]+[avg_total(s) for s in scenarios]
+    colors=[BLUE]+[SCOL[s] for s in scenarios]
+
+    fig=go.Figure(go.Bar(
+        x=labels, y=totals,
+        width=.22,
+        marker=dict(color=colors, line=dict(width=0)),
+        text=[ars(round(v),0) for v in totals],
+        textposition="outside",
+        textfont=dict(color=INK,size=13),
+        cliponaxis=False,
+        hovertemplate="<b>%{x}</b><br>Costo total: $%{y:,.0f}/paq.<extra></extra>"
+    ))
+    executive_layout(fig,385,False,dict(l=18,r=18,t=52,b=30))
+    fig.update_layout(
+        title=dict(
+            text="<b>Costo total por escenario</b>",
+            x=.02, xanchor="left",
+            font=dict(size=16,color=INK)
+        ),
+        bargap=.72
+    )
+    fig.update_yaxes(title="$ / paquete",rangemode="tozero")
+    fig.update_xaxes(title="",showgrid=False)
+    st.plotly_chart(fig,use_container_width=True,config={"displayModeBar":False})
+
+with right:
+    # ---------- Visual matrix: cost + variation, designed as an executive comparison ----------
+    shown_scenarios=scenarios
+
+    def fmt_cost(stage_name, value):
+        if stage_name in ["XD","Service Center"]:
+            return ars(value,2)
+        return ars(round(value),0)
+
+    def var_pct(stage_name, scenario):
+        if stage_name in ["XD","Service Center"]:
+            return 0
+        return (stage_cost(stage_name,scenario)/NORMAL[stage_name]-1)*100
+
+    stage_icons={
+        "Colecta":"▣",
+        "XD":"◇",
+        "Media milla":"⬡",
+        "Service Center":"▤",
+        "Última milla":"▰",
+        "TOTAL":"Σ"
+    }
+
+    rows=selected_stages + (["TOTAL"] if stage=="Todas" else [])
+
+    html = """
+    <div style="background:#fff;border:1px solid #E5E5EA;border-radius:18px;
+                box-shadow:0 2px 12px rgba(0,0,0,.025);overflow:hidden;">
+      <div style="padding:16px 18px 12px;font-size:16px;font-weight:800;color:#111;">
+        Costo por etapa y variación vs. normal
+      </div>
+      <div style="overflow-x:auto;">
+      <table style="width:100%;border-collapse:separate;border-spacing:0;font-size:12px;color:#111;">
+        <thead>
+          <tr>
+            <th rowspan="2" style="text-align:left;padding:12px 12px;background:#F2F2F7;border-top:1px solid #E5E5EA;">Etapa</th>
+            <th rowspan="2" style="text-align:right;padding:12px;background:#F2F2F7;border-top:1px solid #E5E5EA;">Normal</th>
+    """
+    for s in shown_scenarios:
+        tint={"5x":"#EAF6ED","5,5x":"#FFF4D8","6x":"#FDE9E7"}[s]
+        html += f'<th colspan="2" style="text-align:center;padding:9px 10px;background:{tint};border-top:1px solid #E5E5EA;font-size:14px;">{s}</th>'
+    html += "</tr><tr>"
+    for s in shown_scenarios:
+        tint={"5x":"#F4FAF5","5,5x":"#FFF9EA","6x":"#FEF3F2"}[s]
+        html += f'<th style="text-align:right;padding:8px;background:{tint};">Costo</th><th style="text-align:left;padding:8px;background:{tint};">Var. vs. normal</th>'
+    html += "</tr></thead><tbody>"
+
+    for e in rows:
+        is_total=(e=="TOTAL")
+        bg="#F2F2F7" if is_total else "#FFFFFF"
+        fw="800" if is_total else "600"
+        icon=stage_icons[e]
+        if is_total:
+            normal_v=sum(NORMAL.values())
+        else:
+            normal_v=NORMAL[e]
+
+        normal_text = ars(round(normal_v),0) if e not in ["XD","Service Center"] else ars(normal_v,2)
+
+        html += f"""
+        <tr style="background:{bg};">
+          <td style="padding:12px;border-top:1px solid #E5E5EA;font-weight:{fw};white-space:nowrap;">
+            <span style="display:inline-flex;width:24px;height:24px;border-radius:7px;background:#F2F2F7;
+                         align-items:center;justify-content:center;margin-right:7px;font-weight:800;">{icon}</span>{e}
+          </td>
+          <td style="padding:12px;text-align:right;border-top:1px solid #E5E5EA;font-weight:{fw};white-space:nowrap;">{normal_text}</td>
+        """
+
+        for s in shown_scenarios:
+            if is_total:
+                value=avg_total(s)
+                vp=(value/sum(NORMAL.values())-1)*100
+                cost_text=ars(round(value),0)
+            else:
+                value=stage_cost(e,s)
+                vp=var_pct(e,s)
+                cost_text=fmt_cost(e,value)
+
+            col=SCOL[s]
+            tint={"5x":"#F8FCF9","5,5x":"#FFFCF4","6x":"#FFF8F7"}[s]
+            # Visual delta bar. Scale 0-500%.
+            # Si la variación es 0%, la barra queda completamente vacía.
+            width=0 if abs(vp)<.5 else min(100,abs(vp)/5)
+            var_text="0%" if abs(vp)<.5 else f"+{vp:.0f}%"
+            html += f"""
+              <td style="padding:12px 8px;text-align:right;border-top:1px solid #E5E5EA;background:{tint};
+                         font-weight:{fw};white-space:nowrap;">{cost_text}</td>
+              <td style="padding:10px 8px;border-top:1px solid #E5E5EA;background:{tint};min-width:116px;">
+                <div style="display:flex;align-items:center;gap:7px;">
+                  <span style="width:43px;font-weight:800;color:#111;white-space:nowrap;">{var_text}</span>
+                  <span style="height:9px;flex:1;background:#ECEEF1;border-radius:999px;overflow:hidden;min-width:42px;">
+                    <span style="display:block;width:{width}%;height:100%;background:{col};border-radius:999px;"></span>
+                  </span>
+                </div>
+              </td>
+            """
+        html += "</tr>"
+    html += "</tbody></table></div></div>"
+    st.html(html)
+
+# ---------- Composition donuts ----------
+if stage=="Todas":
+    st.markdown('<div style="font-size:15px;font-weight:800;color:#111;margin:26px 0 8px;">Composición del costo por escenario de consumo de capacidad</div>',unsafe_allow_html=True)
+    donut_scenarios=["Normal"]+scenarios
+    cols=st.columns(len(donut_scenarios))
+    stage_colors=["#5AC8FA","#D7D9DE","#FF9F0A","#BFC3CA","#24364B"]
+    for col,sc in zip(cols,donut_scenarios):
+        with col:
+            if sc=="Normal":
+                vals=[NORMAL[e] for e in NORMAL]
+                total_val=sum(vals)
+            else:
+                vals=[stage_cost(e,sc) for e in NORMAL]
+                total_val=sum(vals)
+            fig=go.Figure(go.Pie(
+                labels=list(NORMAL.keys()),values=vals,hole=.70,
+                marker=dict(colors=stage_colors,line=dict(color="#FFFFFF",width=2)),
+                sort=False,textinfo="none",
+                hovertemplate="<b>%{label}</b><br>$%{value:,.2f}/paq.<br>%{percent}<extra></extra>"
+            ))
+            fig.add_annotation(
+                x=.5,y=.53,text=f"<b>{sc}</b><br>{ars(round(total_val),0)}",
+                showarrow=False,font=dict(size=14,color=INK),align="center"
+            )
+            executive_layout(fig,225,False,dict(l=4,r=4,t=4,b=4))
+            st.plotly_chart(fig,use_container_width=True,config={"displayModeBar":False})
+
+    st.markdown(
+        '<div style="display:flex;justify-content:center;gap:22px;flex-wrap:wrap;font-size:11px;color:#111;margin-top:-8px;">'
+        '<span>● <b>Colecta</b></span><span>● XD</span><span>● <b>Media milla</b></span>'
+        '<span>● Service Center</span><span>● <b>Última milla</b></span></div>',
+        unsafe_allow_html=True
+    )
+
+# Keep the exact fixed-cost economics visible when those stages are selected / all stages shown.
+if stage=="Todas" or stage in ["XD","Service Center"]:
+    centers=["XD","Service Center"] if stage=="Todas" else [stage]
+    fixed=pd.DataFrame({
+        "Centro":centers,
+        "Costo promedio normal":[ars(NORMAL[e],2) if NORMAL[e] != 0 else "$0" for e in centers],
+        "Promedio con voluminosos":[
+            ars(XD_AFTER,2) if e=="XD" and XD_AFTER != 0
+            else ars(SC_AFTER,2) if e=="Service Center" and SC_AFTER != 0
+            else "$0"
+            for e in centers
+        ],
+        "Variación":["0%"]*len(centers),
+        "Costo incremental proyecto":["$0"]*len(centers)
+    })
+    st.dataframe(fixed,hide_index=True,use_container_width=True,height=45+35*len(fixed))
+
+# =========================
+# 03 REVENUE
+# =========================
+st.markdown("""
+<div class="section-head">
+ <div class="kicker">03 · Monetización</div>
+ <div class="h2">Revenue</div>
+ <div class="deck">Ingreso por paquete: normal vs. voluminoso.</div>
+</div>
+""",unsafe_allow_html=True)
+
+left,right=st.columns([1.2,1],gap="large")
+with left:
+    fig=go.Figure(go.Bar(
+        y=["Normal","Voluminoso"],x=[REV_N,REV_V],orientation="h",width=.38,
+        marker_color=[BLUE,YELLOW],
+        text=[ars(REV_N),ars(REV_V)],textposition="outside",
+        textfont=dict(color=INK,size=14),cliponaxis=False,
+        hovertemplate="<b>%{y}</b><br>Revenue: $%{x:,.0f}/paq.<extra></extra>"
+    ))
+    executive_layout(fig,225,False,dict(l=10,r=65,t=10,b=25))
+    fig.update_xaxes(title="$ / paquete",range=[0,22000])
+    fig.update_yaxes(title="",showgrid=False)
+    st.plotly_chart(fig,use_container_width=True,config={"displayModeBar":False})
+with right:
+    c1,c2=st.columns(2)
+    with c1:
+        st.markdown('<div class="metric-card"><div class="metric-label">Diferencia / paquete</div><div class="metric-value">+$16.000</div><div class="metric-note">voluminoso vs. normal</div></div>',unsafe_allow_html=True)
+    with c2:
+        st.markdown('<div class="metric-card"><div class="metric-label">Revenue relativo</div><div class="metric-value">6,33x</div><div class="metric-note">variación +533% vs. normal</div></div>',unsafe_allow_html=True)
+
+# =========================
+# 04 SENSITIVITY
+# =========================
+st.markdown("""
+<div class="section-head">
+ <div class="kicker">04 · Decisión</div>
+ <div class="h2">Sensibilidad y rentabilidad</div>
+ <div class="deck">Impacto económico ante distintos niveles de consumo de capacidad.</div>
+</div>
+""",unsafe_allow_html=True)
+
+sens=pd.DataFrame([{
+    "Escenario":s,
+    "Costo incremental":metrics(s)[0],
+    "Resultado / paquete":metrics(s)[1],
+    "Margen":metrics(s)[2],
+    "Impacto mensual":metrics(s)[3]
+} for s in FACT])
+
+left,right=st.columns([1.2,1],gap="large")
+with left:
+    fig=go.Figure(go.Scatter(
+        x=[5,5.5,6],y=sens["Impacto mensual"],
+        mode="lines+markers",
+        line=dict(color=INK,width=3),
+        marker=dict(size=14,color=[SCOL[s] for s in FACT],line=dict(color="#FFFFFF",width=2)),
+        hovertemplate="Resultado mensual: %{y:.1f} M<extra></extra>"
+    ))
+    for x,y in zip([5,5.5,6],sens["Impacto mensual"]):
+        fig.add_annotation(
+            x=x,y=y,text=(f"<b>{y:+.1f} M</b>").replace(".",","),
+            showarrow=False,yshift=18 if y>=0 else -18,
+            font=dict(size=13,color=INK)
+        )
+    fig.add_hline(y=0,line_color="#8E8E93",line_width=1)
+    fig.add_vline(
+        x=BE,line_dash="dash",line_color=RED,line_width=2,
+        annotation_text=f"Break-even {dec(BE,2)}x",
+        annotation_position="top",
+        annotation_font=dict(color=INK,size=12)
+    )
+    executive_layout(fig,320,False,dict(l=10,r=10,t=35,b=20))
+    fig.update_xaxes(title="Consumo de capacidad",tickvals=[5,5.5,6],ticktext=["5x","5,5x","6x"],showgrid=False)
+    fig.update_yaxes(title="Resultado mensual ($M)")
+    st.plotly_chart(fig,use_container_width=True,config={"displayModeBar":False})
+with right:
+    d=sens.copy()
+    d["Costo incremental"]=d["Costo incremental"].map(ars)
+    d["Resultado / paquete"]=d["Resultado / paquete"].map(ars)
+    d["Margen"]=d["Margen"].map(lambda x:dec(x)+"%")
+    d["Impacto mensual"]=d["Impacto mensual"].map(lambda x:(f"{x:+.1f} M").replace(".",","))
+    st.dataframe(d,hide_index=True,use_container_width=True,height=180)
